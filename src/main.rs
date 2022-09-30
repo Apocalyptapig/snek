@@ -114,8 +114,8 @@ fn snake_movement(mut head_positions: Query<(&mut Position, &mut SnakeHead)>) {
     for (mut pos, facing) in head_positions.iter_mut() {
         match &facing.dir {
             Left if pos.x > 0 => pos.x -= 1,
-            Right if pos.x < 19 => pos.x += 1,
-            Up if pos.y < 19 => pos.y += 1,
+            Right if pos.x < GRID_WIDTH - 1 => pos.x += 1,
+            Up if pos.y < GRID_WIDTH - 1 => pos.y += 1,
             Down if pos.y > 0 => pos.y -= 1,
             _ => return,
         }
