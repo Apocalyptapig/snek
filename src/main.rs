@@ -3,8 +3,7 @@
 // ----------
 // imports
 
-use bevy::core::FixedTimestep;
-use bevy::{prelude::*, window::PresentMode};
+use bevy::{core::FixedTimestep, prelude::*};
 use rand::{thread_rng, Rng};
 
 // imports
@@ -46,19 +45,16 @@ struct Size {
     height: f32,
 }
 
-impl Size {
-    pub fn square(x: f32) -> Self {
-        Self {
-            width: x,
-            height: x,
-        }
-    }
-}
-
 #[derive(Component)]
 struct Food;
 
-fn spawn_food(mut commands: Commands) {
+struct ScoredEvent;
+
+// components
+// ---------
+// systems
+
+fn spawn_food(mut commands: &mut Commands) {
     let mut rng = thread_rng();
 
     commands
@@ -67,19 +63,18 @@ fn spawn_food(mut commands: Commands) {
                 color: FOOD_COLOR,
                 ..default()
             },
+            transform: Transform {
+                scale: Vec3::new(20.0, 20.0, 20.0),
+                ..default()
+            },
             ..default()
         })
-        .insert(Food)
         .insert(Position {
             x: rng.gen_range(0..(GRID_WIDTH - 1)),
             y: rng.gen_range(0..(GRID_HEIGHT - 1)),
         })
-        .insert(Size::square(0.8));
+        .insert(Food);
 }
-
-// components
-// ---------
-// systems
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn_bundle(OrthographicCameraBundle::new_2d());
@@ -160,6 +155,21 @@ fn position_translation(windows: Res<Windows>, mut q: Query<(&Position, &mut Tra
     }
 }
 
+fn collision_detection(
+    mut commands: Commands,
+    snake: Query<&Position, With<SnakeHead>>,
+    food: Query<(Entity, &Position), With<Food>>,
+) {
+    for snake_pos in snake.iter() {
+        for (ent, food_pos) in food.iter() {
+            if snake_pos == food_pos {
+                commands.entity(ent).despawn();
+                spawn_food(&mut commands);
+            }
+        }
+    }
+}
+
 // systems
 // ---------
 // main
@@ -174,18 +184,15 @@ fn main() {
         })
         .insert_resource(ClearColor(Color::rgb(0.04, 0.04, 0.04)))
         .add_startup_system(setup_camera)
-        .add_startup_system(setup_camera)
         .add_startup_system(spawn_snake)
+        .add_startup_system(|mut commands: Commands| spawn_food(&mut commands))
+        .add_event::<ScoredEvent>()
         .add_system(snake_controls.before(snake_movement))
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(0.150))
-                .with_system(snake_movement),
-        )
-        .add_system_set(
-            SystemSet::new()
-                .with_run_criteria(FixedTimestep::step(4.0))
-                .with_system(spawn_food),
+                .with_system(snake_movement)
+                .with_system(collision_detection.after(snake_movement)),
         )
         .add_system_set_to_stage(
             CoreStage::PostUpdate,
