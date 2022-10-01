@@ -1,9 +1,24 @@
+//#![windows_subsystem = "windows"]
+
+// ----------
+// imports
+
 use bevy::core::FixedTimestep;
 use bevy::{prelude::*, window::PresentMode};
+use rand::{thread_rng, Rng};
 
-const SNAKE_HEAD_COLOR: Color = Color::rgb(0.7, 0.7, 0.7);
+// imports
+// ----------
+// constants
+
+const SNAKE_HEAD_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
 const GRID_WIDTH: i32 = 20;
 const GRID_HEIGHT: i32 = 20;
+const FOOD_COLOR: Color = Color::rgb(1.0, 0.0, 1.0);
+
+// constants
+// ---------
+// components
 
 #[derive(Component)]
 struct SnakeHead {
@@ -40,34 +55,31 @@ impl Size {
     }
 }
 
-fn main() {
-    App::new()
-        .insert_resource(WindowDescriptor {
-            // <--
-            title: "snek".to_string(), // <--
-            width: 500.0,              // <--
-            height: 500.0,             // <--
-            ..default()                // <--
+#[derive(Component)]
+struct Food;
+
+fn spawn_food(mut commands: Commands) {
+    let mut rng = thread_rng();
+
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: FOOD_COLOR,
+                ..default()
+            },
+            ..default()
         })
-        .insert_resource(ClearColor(Color::rgb(0.04, 0.04, 0.04)))
-        .add_startup_system(setup_camera)
-        .add_startup_system(setup_camera)
-        .add_startup_system(spawn_snake)
-        .add_system(snake_controls.before(snake_movement))
-        .add_system_set(
-            SystemSet::new()
-                .with_run_criteria(FixedTimestep::step(0.150))
-                .with_system(snake_movement),
-        )
-        .add_system_set_to_stage(
-            CoreStage::PostUpdate,
-            SystemSet::new()
-                .with_system(position_translation)
-                .with_system(size_scaling),
-        )
-        .add_plugins(DefaultPlugins)
-        .run();
+        .insert(Food)
+        .insert(Position {
+            x: rng.gen_range(0..(GRID_WIDTH - 1)),
+            y: rng.gen_range(0..(GRID_HEIGHT - 1)),
+        })
+        .insert(Size::square(0.8));
 }
+
+// components
+// ---------
+// systems
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn_bundle(OrthographicCameraBundle::new_2d());
@@ -119,8 +131,6 @@ fn snake_movement(mut head_positions: Query<(&mut Position, &mut SnakeHead)>) {
             Down if pos.y > 0 => pos.y -= 1,
             _ => return,
         }
-
-        //println!("{:?}", pos)
     }
 }
 
@@ -148,4 +158,41 @@ fn position_translation(windows: Res<Windows>, mut q: Query<(&Position, &mut Tra
             0.0,
         );
     }
+}
+
+// systems
+// ---------
+// main
+
+fn main() {
+    App::new()
+        .insert_resource(WindowDescriptor {
+            title: "snek".to_string(),
+            width: 500.0,
+            height: 500.0,
+            ..default()
+        })
+        .insert_resource(ClearColor(Color::rgb(0.04, 0.04, 0.04)))
+        .add_startup_system(setup_camera)
+        .add_startup_system(setup_camera)
+        .add_startup_system(spawn_snake)
+        .add_system(snake_controls.before(snake_movement))
+        .add_system_set(
+            SystemSet::new()
+                .with_run_criteria(FixedTimestep::step(0.150))
+                .with_system(snake_movement),
+        )
+        .add_system_set(
+            SystemSet::new()
+                .with_run_criteria(FixedTimestep::step(4.0))
+                .with_system(spawn_food),
+        )
+        .add_system_set_to_stage(
+            CoreStage::PostUpdate,
+            SystemSet::new()
+                .with_system(position_translation)
+                .with_system(size_scaling),
+        )
+        .add_plugins(DefaultPlugins)
+        .run();
 }
