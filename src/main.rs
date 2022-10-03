@@ -3,7 +3,7 @@
 // ----------
 // imports
 
-use bevy::{core::FixedTimestep, prelude::*};
+use bevy::{time::FixedTimestep, prelude::*};
 use rand::{thread_rng, Rng};
 
 // imports
@@ -14,6 +14,8 @@ const SNAKE_HEAD_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
 const GRID_WIDTH: i32 = 20;
 const GRID_HEIGHT: i32 = 20;
 const FOOD_COLOR: Color = Color::rgb(1.0, 0.0, 1.0);
+
+const PADDING: f32 = 100.0;
 
 // constants
 // ---------
@@ -54,7 +56,7 @@ struct ScoredEvent;
 // ---------
 // systems
 
-fn spawn_food(mut commands: &mut Commands) {
+fn spawn_food(commands: &mut Commands) {
     let mut rng = thread_rng();
 
     commands
@@ -77,7 +79,7 @@ fn spawn_food(mut commands: &mut Commands) {
 }
 
 fn setup_camera(mut commands: Commands) {
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    commands.spawn_bundle(Camera2dBundle{ ..default() });
 }
 
 fn spawn_snake(mut commands: Commands) {
@@ -133,8 +135,8 @@ fn size_scaling(windows: Res<Windows>, mut q: Query<(&Size, &mut Transform)>) {
     let window = windows.get_primary().unwrap();
     for (sprite_size, mut transform) in q.iter_mut() {
         transform.scale = Vec3::new(
-            sprite_size.width / GRID_WIDTH as f32 * window.width() as f32,
-            sprite_size.height / GRID_HEIGHT as f32 * window.height() as f32,
+            sprite_size.width / GRID_WIDTH as f32 * (window.height() as f32 - PADDING),
+            sprite_size.height / GRID_HEIGHT as f32 * (window.height() as f32 - PADDING),
             1.0,
         );
     }
@@ -148,9 +150,9 @@ fn position_translation(windows: Res<Windows>, mut q: Query<(&Position, &mut Tra
     let window = windows.get_primary().unwrap();
     for (pos, mut transform) in q.iter_mut() {
         transform.translation = Vec3::new(
-            convert(pos.x as f32, window.width() as f32, GRID_WIDTH as f32),
-            convert(pos.y as f32, window.height() as f32, GRID_HEIGHT as f32),
-            0.0,
+            convert(pos.x as f32, window.height() as f32 - PADDING, GRID_WIDTH as f32),
+            convert(pos.y as f32, window.height() as f32 - PADDING, GRID_HEIGHT as f32),
+            10.0,
         );
     }
 }
@@ -170,9 +172,53 @@ fn collision_detection(
     }
 }
 
+fn setup_board(mut commands: Commands) {
+    for x in 0..(GRID_WIDTH) {
+        if x % 2 == 0 {
+            for y in (0..(GRID_HEIGHT - 1)).step_by(2) {
+                draw_bg_element(x, y, (0.027, 0.212, 0.259), &mut commands)
+            }
+        } else {
+            for y in (1..(GRID_HEIGHT)).step_by(2) {
+                draw_bg_element(x, y, (0.027, 0.212, 0.259), &mut commands)
+            }
+        }
+    }
+}
+
+fn setup_outline(mut commands: Commands) {
+    const OUTLINE_COLOR: (f32, f32, f32) = (0.345, 0.431, 0.459);
+
+    for y in -1..(GRID_HEIGHT + 1) {
+        draw_bg_element(-1, y, OUTLINE_COLOR, &mut commands);
+        draw_bg_element(GRID_HEIGHT, y, OUTLINE_COLOR, &mut commands);
+    }
+
+    for x in 0..(GRID_HEIGHT) {
+        draw_bg_element(x, -1, OUTLINE_COLOR, &mut commands);
+        draw_bg_element(x, GRID_WIDTH, OUTLINE_COLOR, &mut commands);
+    }
+}
+
+fn draw_bg_element(x: i32, y: i32, color: (f32, f32, f32), commands: &mut Commands) {
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::rgb(color.0, color.1, color.2),
+                ..default()
+            },
+            transform: Transform {
+                scale: Vec3::new(20.0, 20.0, 0.1),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(Position { x: x, y: y });
+}
+
 // systems
 // ---------
-// main
+// main 
 
 fn main() {
     App::new()
@@ -182,11 +228,13 @@ fn main() {
             height: 500.0,
             ..default()
         })
-        .insert_resource(ClearColor(Color::rgb(0.04, 0.04, 0.04)))
+        .insert_resource(ClearColor(Color::rgb(0.0, 0.169, 0.212)))
         .add_startup_system(setup_camera)
         .add_startup_system(spawn_snake)
         .add_startup_system(|mut commands: Commands| spawn_food(&mut commands))
         .add_event::<ScoredEvent>()
+        .add_startup_system(setup_board)
+        .add_startup_system(setup_outline)
         .add_system(snake_controls.before(snake_movement))
         .add_system_set(
             SystemSet::new()
