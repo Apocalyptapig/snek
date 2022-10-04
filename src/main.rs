@@ -3,7 +3,7 @@
 // ----------
 // imports
 
-use bevy::{time::FixedTimestep, prelude::*};
+use bevy::{prelude::*, time::FixedTimestep};
 use rand::{thread_rng, Rng};
 
 // imports
@@ -25,6 +25,17 @@ const PADDING: f32 = 100.0;
 struct SnakeHead {
     dir: SnakeDirection,
 }
+
+#[derive(Default)]
+struct LastTailPosition(Option<Position>);
+
+#[derive(Component)]
+struct SnakeSegment {
+    dir: SnakeDirection,
+}
+
+#[derive(Default, Deref, DerefMut)]
+struct SnakeSegments(Vec<Entity>);
 
 #[derive(PartialEq)]
 enum SnakeDirection {
@@ -56,6 +67,17 @@ struct ScoredEvent;
 // ---------
 // systems
 
+fn scored(
+    commands: Commands,
+    mut segments: ResMut<SnakeSegments>,
+    mut score_reader: EventReader<ScoredEvent>,
+    last_tail_position: Res<LastTailPosition>,
+) {
+    if score_reader.iter().next().is_some() {
+        segments.push(spawn_segment(commands, last_tail_position.0.unwrap()));
+    }
+}
+
 fn spawn_food(commands: &mut Commands) {
     let mut rng = thread_rng();
 
@@ -79,26 +101,33 @@ fn spawn_food(commands: &mut Commands) {
 }
 
 fn setup_camera(mut commands: Commands) {
-    commands.spawn_bundle(Camera2dBundle{ ..default() });
+    commands.spawn_bundle(Camera2dBundle { ..default() });
 }
 
-fn spawn_snake(mut commands: Commands) {
-    commands
-        .spawn_bundle(SpriteBundle {
-            sprite: Sprite {
-                color: SNAKE_HEAD_COLOR,
+fn spawn_snake(mut commands: Commands, mut segments: ResMut<SnakeSegments>) {
+    *segments = SnakeSegments(vec![
+        commands
+            .spawn_bundle(SpriteBundle {
+                sprite: Sprite {
+                    color: SNAKE_HEAD_COLOR,
+                    ..default()
+                },
+                transform: Transform {
+                    scale: Vec3::new(25.0, 25.0, 25.0),
+                    ..default()
+                },
                 ..default()
-            },
-            transform: Transform {
-                scale: Vec3::new(25.0, 25.0, 25.0),
-                ..default()
-            },
-            ..default()
-        })
-        .insert(SnakeHead {
-            dir: SnakeDirection::Null,
-        })
-        .insert(Position { x: 3, y: 3 });
+            })
+            .insert(SnakeHead {
+                dir: SnakeDirection::Null,
+            })
+            .insert(SnakeSegment {
+                dir: SnakeDirection::Null,
+            })
+            .insert(Position { x: 3, y: 3 })
+            .id(),
+        spawn_segment(commands, Position { x: 3, y: 2 }),
+    ]);
 }
 
 fn snake_controls(keyboard_input: Res<Input<KeyCode>>, mut head_positions: Query<&mut SnakeHead>) {
@@ -117,17 +146,37 @@ fn snake_controls(keyboard_input: Res<Input<KeyCode>>, mut head_positions: Query
     }
 }
 
-fn snake_movement(mut head_positions: Query<(&mut Position, &mut SnakeHead)>) {
+fn snake_movement(
+    segments: ResMut<SnakeSegments>,
+    mut heads: Query<(Entity, &SnakeHead)>,
+    mut positions: Query<&mut Position>,
+    mut last_tail_position: ResMut<LastTailPosition>
+) {
     use SnakeDirection::*;
 
-    for (mut pos, facing) in head_positions.iter_mut() {
-        match &facing.dir {
+    if let Some((head_entity, head)) = heads.iter_mut().next() {
+        let segment_positions = segments
+            .iter()
+            .map(|e| *positions.get_mut(*e).unwrap())
+            .collect::<Vec<Position>>();
+        let mut pos = positions.get_mut(head_entity).unwrap();
+
+        match &head.dir {
             Left if pos.x > 0 => pos.x -= 1,
             Right if pos.x < GRID_WIDTH - 1 => pos.x += 1,
             Up if pos.y < GRID_WIDTH - 1 => pos.y += 1,
             Down if pos.y > 0 => pos.y -= 1,
             _ => return,
         }
+
+        segment_positions
+            .iter()
+            .zip(segments.iter().skip(1))
+            .for_each(|(pos, segment)| {
+                *positions.get_mut(*segment).unwrap() = *pos;
+            });
+
+        *last_tail_position = LastTailPosition(Some(*segment_positions.last().unwrap()));
     }
 }
 
@@ -150,8 +199,16 @@ fn position_translation(windows: Res<Windows>, mut q: Query<(&Position, &mut Tra
     let window = windows.get_primary().unwrap();
     for (pos, mut transform) in q.iter_mut() {
         transform.translation = Vec3::new(
-            convert(pos.x as f32, window.height() as f32 - PADDING, GRID_WIDTH as f32),
-            convert(pos.y as f32, window.height() as f32 - PADDING, GRID_HEIGHT as f32),
+            convert(
+                pos.x as f32,
+                window.height() as f32 - PADDING,
+                GRID_WIDTH as f32,
+            ),
+            convert(
+                pos.y as f32,
+                window.height() as f32 - PADDING,
+                GRID_HEIGHT as f32,
+            ),
             10.0,
         );
     }
@@ -159,6 +216,7 @@ fn position_translation(windows: Res<Windows>, mut q: Query<(&Position, &mut Tra
 
 fn collision_detection(
     mut commands: Commands,
+    mut score_writer: EventWriter<ScoredEvent>,
     snake: Query<&Position, With<SnakeHead>>,
     food: Query<(Entity, &Position), With<Food>>,
 ) {
@@ -167,6 +225,7 @@ fn collision_detection(
             if snake_pos == food_pos {
                 commands.entity(ent).despawn();
                 spawn_food(&mut commands);
+                score_writer.send(ScoredEvent);
             }
         }
     }
@@ -176,11 +235,11 @@ fn setup_board(mut commands: Commands) {
     for x in 0..(GRID_WIDTH) {
         if x % 2 == 0 {
             for y in (0..(GRID_HEIGHT - 1)).step_by(2) {
-                draw_bg_element(x, y, (0.027, 0.212, 0.259), &mut commands)
+                draw_bg_element(x, y, 1.0, 1.0, (0.027, 0.212, 0.259), &mut commands)
             }
         } else {
             for y in (1..(GRID_HEIGHT)).step_by(2) {
-                draw_bg_element(x, y, (0.027, 0.212, 0.259), &mut commands)
+                draw_bg_element(x, y, 1.0, 1.0, (0.027, 0.212, 0.259), &mut commands)
             }
         }
     }
@@ -189,18 +248,25 @@ fn setup_board(mut commands: Commands) {
 fn setup_outline(mut commands: Commands) {
     const OUTLINE_COLOR: (f32, f32, f32) = (0.345, 0.431, 0.459);
 
-    for y in -1..(GRID_HEIGHT + 1) {
-        draw_bg_element(-1, y, OUTLINE_COLOR, &mut commands);
-        draw_bg_element(GRID_HEIGHT, y, OUTLINE_COLOR, &mut commands);
+    for y in 0..GRID_HEIGHT {
+        draw_bg_element(-1, y, 1.0, 0.5, OUTLINE_COLOR, &mut commands);
+        draw_bg_element(GRID_HEIGHT, y, 1.0, 0.5, OUTLINE_COLOR, &mut commands);
     }
 
-    for x in 0..(GRID_HEIGHT) {
-        draw_bg_element(x, -1, OUTLINE_COLOR, &mut commands);
-        draw_bg_element(x, GRID_WIDTH, OUTLINE_COLOR, &mut commands);
+    for x in 0..GRID_HEIGHT {
+        draw_bg_element(x, -1, 0.5, 1.0, OUTLINE_COLOR, &mut commands);
+        draw_bg_element(x, GRID_WIDTH, 0.5, 1.0, OUTLINE_COLOR, &mut commands);
     }
 }
 
-fn draw_bg_element(x: i32, y: i32, color: (f32, f32, f32), commands: &mut Commands) {
+fn draw_bg_element(
+    x: i32,
+    y: i32,
+    h: f32,
+    w: f32,
+    color: (f32, f32, f32),
+    commands: &mut Commands,
+) {
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
@@ -208,17 +274,37 @@ fn draw_bg_element(x: i32, y: i32, color: (f32, f32, f32), commands: &mut Comman
                 ..default()
             },
             transform: Transform {
-                scale: Vec3::new(20.0, 20.0, 0.1),
+                scale: Vec3::new(20.0 * w, 20.0 * h, 0.1),
                 ..default()
             },
             ..default()
         })
-        .insert(Position { x: x, y: y });
+        .insert(Position { x, y });
+}
+
+fn spawn_segment(mut commands: Commands, pos: Position) -> Entity {
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::RED,
+                ..default()
+            },
+            transform: Transform {
+                scale: Vec3::new(20.0, 20.0, 24.0),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(SnakeSegment {
+            dir: SnakeDirection::Null,
+        })
+        .insert(pos)
+        .id()
 }
 
 // systems
 // ---------
-// main 
+// main
 
 fn main() {
     App::new()
@@ -233,14 +319,17 @@ fn main() {
         .add_startup_system(spawn_snake)
         .add_startup_system(|mut commands: Commands| spawn_food(&mut commands))
         .add_event::<ScoredEvent>()
-        .add_startup_system(setup_board)
+        //.add_startup_system(setup_board)
         .add_startup_system(setup_outline)
+        .insert_resource(SnakeSegments::default())
+        .insert_resource(LastTailPosition::default())
         .add_system(snake_controls.before(snake_movement))
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(0.150))
                 .with_system(snake_movement)
-                .with_system(collision_detection.after(snake_movement)),
+                .with_system(collision_detection.after(snake_movement))
+                .with_system(scored.after(collision_detection))
         )
         .add_system_set_to_stage(
             CoreStage::PostUpdate,
