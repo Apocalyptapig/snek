@@ -3,7 +3,7 @@
 // ----------
 // imports
 
-use bevy::{prelude::*, time::FixedTimestep};
+use bevy::{prelude::*, render::texture::*, time::FixedTimestep};
 use rand::{thread_rng, Rng};
 
 // imports
@@ -63,18 +63,23 @@ struct Food;
 
 struct ScoredEvent;
 
+#[derive(Default)]
+struct SnakeTexture {
+    atlas: Handle<TextureAtlas>,
+}
+
 // components
 // ---------
 // systems
 
 fn scored(
-    commands: Commands,
+    mut commands: Commands,
     mut segments: ResMut<SnakeSegments>,
     mut score_reader: EventReader<ScoredEvent>,
     last_tail_position: Res<LastTailPosition>,
 ) {
     if score_reader.iter().next().is_some() {
-        segments.push(spawn_segment(commands, last_tail_position.0.unwrap()));
+        segments.push(spawn_segment(&mut commands, last_tail_position.0.unwrap()));
     }
 }
 
@@ -104,16 +109,26 @@ fn setup_camera(mut commands: Commands) {
     commands.spawn_bundle(Camera2dBundle { ..default() });
 }
 
-fn spawn_snake(mut commands: Commands, mut segments: ResMut<SnakeSegments>) {
+fn spawn_snake(
+    mut commands: Commands,
+    mut segments: ResMut<SnakeSegments>,
+    asset_server: Res<AssetServer>,
+    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
+) {
+    let texture_handle = asset_server.load("assets.png");
+    let snake_texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(16.0, 16.0), 4, 4);
+    let texture_atlas_handle = texture_atlases.add(snake_texture_atlas);
+
     *segments = SnakeSegments(vec![
         commands
-            .spawn_bundle(SpriteBundle {
-                sprite: Sprite {
-                    color: SNAKE_HEAD_COLOR,
+            .spawn_bundle(SpriteSheetBundle {
+                sprite: TextureAtlasSprite {
+                    index: 0,
                     ..default()
                 },
+                texture_atlas: texture_atlas_handle,
                 transform: Transform {
-                    scale: Vec3::new(25.0, 25.0, 25.0),
+                    scale: Vec3::new(1.0, 1.0, 1.0),
                     ..default()
                 },
                 ..default()
@@ -126,7 +141,8 @@ fn spawn_snake(mut commands: Commands, mut segments: ResMut<SnakeSegments>) {
             })
             .insert(Position { x: 3, y: 3 })
             .id(),
-        spawn_segment(commands, Position { x: 3, y: 2 }),
+        spawn_segment(&mut commands, Position { x: 3, y: 2 }),
+        spawn_segment(&mut commands, Position { x: 3, y: 1 }),
     ]);
 }
 
@@ -150,7 +166,7 @@ fn snake_movement(
     segments: ResMut<SnakeSegments>,
     mut heads: Query<(Entity, &SnakeHead)>,
     mut positions: Query<&mut Position>,
-    mut last_tail_position: ResMut<LastTailPosition>
+    mut last_tail_position: ResMut<LastTailPosition>,
 ) {
     use SnakeDirection::*;
 
@@ -282,7 +298,7 @@ fn draw_bg_element(
         .insert(Position { x, y });
 }
 
-fn spawn_segment(mut commands: Commands, pos: Position) -> Entity {
+fn spawn_segment(commands: &mut Commands, pos: Position) -> Entity {
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
@@ -302,7 +318,7 @@ fn spawn_segment(mut commands: Commands, pos: Position) -> Entity {
         .id()
 }
 
-// systems
+// systems2
 // ---------
 // main
 
@@ -314,6 +330,8 @@ fn main() {
             height: 500.0,
             ..default()
         })
+        .init_resource::<SnakeTexture>()
+        .insert_resource(ImageSettings::default_nearest())
         .insert_resource(ClearColor(Color::rgb(0.0, 0.169, 0.212)))
         .add_startup_system(setup_camera)
         .add_startup_system(spawn_snake)
@@ -329,7 +347,7 @@ fn main() {
                 .with_run_criteria(FixedTimestep::step(0.150))
                 .with_system(snake_movement)
                 .with_system(collision_detection.after(snake_movement))
-                .with_system(scored.after(collision_detection))
+                .with_system(scored.after(collision_detection)),
         )
         .add_system_set_to_stage(
             CoreStage::PostUpdate,
