@@ -77,9 +77,16 @@ fn scored(
     mut segments: ResMut<SnakeSegments>,
     mut score_reader: EventReader<ScoredEvent>,
     last_tail_position: Res<LastTailPosition>,
+    asset_server: Res<AssetServer>,
+    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
+
 ) {
+    let texture_handle = asset_server.load("assets.png");
+    let snake_texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(16.0, 16.0), 4, 4);
+    let texture_atlas_handle = texture_atlases.add(snake_texture_atlas);
+
     if score_reader.iter().next().is_some() {
-        segments.push(spawn_segment(&mut commands, last_tail_position.0.unwrap()));
+        segments.push(spawn_segment(&mut commands, last_tail_position.0.unwrap(), texture_atlas_handle));
     }
 }
 
@@ -126,7 +133,7 @@ fn spawn_snake(
                     index: 0,
                     ..default()
                 },
-                texture_atlas: texture_atlas_handle,
+                texture_atlas: texture_atlas_handle.clone(),
                 transform: Transform {
                     scale: Vec3::new(1.0, 1.0, 1.0),
                     ..default()
@@ -141,8 +148,8 @@ fn spawn_snake(
             })
             .insert(Position { x: 3, y: 3 })
             .id(),
-        spawn_segment(&mut commands, Position { x: 3, y: 2 }),
-        spawn_segment(&mut commands, Position { x: 3, y: 1 }),
+        spawn_segment(&mut commands, Position { x: 3, y: 2 }, texture_atlas_handle.clone()),
+        spawn_segment(&mut commands, Position { x: 3, y: 1 }, texture_atlas_handle),
     ]);
 }
 
@@ -298,18 +305,20 @@ fn draw_bg_element(
         .insert(Position { x, y });
 }
 
-fn spawn_segment(commands: &mut Commands, pos: Position) -> Entity {
+fn spawn_segment(commands: &mut Commands, pos: Position, texture_atlas_handle: Handle<TextureAtlas>) -> Entity {
     commands
-        .spawn_bundle(SpriteBundle {
-            sprite: Sprite {
-                color: Color::RED,
-                ..default()
-            },
-            transform: Transform {
-                scale: Vec3::new(20.0, 20.0, 24.0),
-                ..default()
-            },
+    .spawn_bundle(SpriteSheetBundle {
+        sprite: TextureAtlasSprite {
+            index: 1,
             ..default()
+        },
+        texture_atlas: texture_atlas_handle,
+        transform: Transform {
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: Quat::from_rotation_z(1.57),
+            ..default()
+        },
+        ..default()
         })
         .insert(SnakeSegment {
             dir: SnakeDirection::Null,
