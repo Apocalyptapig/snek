@@ -10,7 +10,7 @@ use rand::{thread_rng, Rng};
 // ----------
 // constants
 
-const SNAKE_HEAD_COLOR: Color = Color::rgb(1.0, 1.0, 1.0);
+const SNAKE_SIZE: f32 = 1.27;
 const GRID_WIDTH: i32 = 20;
 const GRID_HEIGHT: i32 = 20;
 const FOOD_COLOR: Color = Color::rgb(1.0, 0.0, 1.0);
@@ -29,15 +29,16 @@ struct SnakeHead {
 #[derive(Default)]
 struct LastTailPosition(Option<Position>);
 
+#[derive(Default)]
+struct LastTailDirection(Option<SnakeDirection>);
+
 #[derive(Component)]
-struct SnakeSegment {
-    dir: SnakeDirection,
-}
+struct SnakeSegment;
 
 #[derive(Default, Deref, DerefMut)]
 struct SnakeSegments(Vec<Entity>);
 
-#[derive(PartialEq)]
+#[derive(Component, Copy, Clone, PartialEq, Debug)]
 enum SnakeDirection {
     Up,
     Down,
@@ -63,11 +64,6 @@ struct Food;
 
 struct ScoredEvent;
 
-#[derive(Default)]
-struct SnakeTexture {
-    atlas: Handle<TextureAtlas>,
-}
-
 // components
 // ---------
 // systems
@@ -77,16 +73,21 @@ fn scored(
     mut segments: ResMut<SnakeSegments>,
     mut score_reader: EventReader<ScoredEvent>,
     last_tail_position: Res<LastTailPosition>,
+    last_tail_direction: Res<LastTailDirection>,
     asset_server: Res<AssetServer>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
-
 ) {
     let texture_handle = asset_server.load("assets.png");
     let snake_texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(16.0, 16.0), 4, 4);
     let texture_atlas_handle = texture_atlases.add(snake_texture_atlas);
 
     if score_reader.iter().next().is_some() {
-        segments.push(spawn_segment(&mut commands, last_tail_position.0.unwrap(), texture_atlas_handle));
+        segments.push(spawn_segment(
+            &mut commands,
+            last_tail_position.0.unwrap(),
+            last_tail_direction.0.unwrap(),
+            texture_atlas_handle,
+        ));
     }
 }
 
@@ -135,7 +136,7 @@ fn spawn_snake(
                 },
                 texture_atlas: texture_atlas_handle.clone(),
                 transform: Transform {
-                    scale: Vec3::new(1.0, 1.0, 1.0),
+                    scale: Vec3::from_array([SNAKE_SIZE; 3]),
                     ..default()
                 },
                 ..default()
@@ -143,28 +144,45 @@ fn spawn_snake(
             .insert(SnakeHead {
                 dir: SnakeDirection::Null,
             })
-            .insert(SnakeSegment {
-                dir: SnakeDirection::Null,
-            })
+            .insert(SnakeSegment)
             .insert(Position { x: 3, y: 3 })
+            .insert(SnakeDirection::Null)
             .id(),
-        spawn_segment(&mut commands, Position { x: 3, y: 2 }, texture_atlas_handle.clone()),
-        spawn_segment(&mut commands, Position { x: 3, y: 1 }, texture_atlas_handle),
+        spawn_segment(
+            &mut commands,
+            Position { x: 3, y: 2 },
+            SnakeDirection::Null,
+            texture_atlas_handle.clone(),
+        ),
+        spawn_segment(
+            &mut commands,
+            Position { x: 3, y: 1 },
+            SnakeDirection::Null,
+            texture_atlas_handle,
+        ),
     ]);
 }
 
-fn snake_controls(keyboard_input: Res<Input<KeyCode>>, mut head_positions: Query<&mut SnakeHead>) {
+fn snake_controls(
+    keyboard_input: Res<Input<KeyCode>>,
+    mut head_positions: Query<&mut SnakeHead>,
+    mut directions: Query<&mut SnakeDirection>,
+) {
     use SnakeDirection::*;
 
-    for mut facing in head_positions.iter_mut() {
+    for (mut facing, mut direction) in head_positions.iter_mut().zip(directions.iter_mut()) {
         if keyboard_input.pressed(KeyCode::Left) && facing.dir != Right {
-            facing.dir = Left
+            facing.dir = Left;
+            *direction = Left
         } else if keyboard_input.pressed(KeyCode::Right) && facing.dir != Left {
-            facing.dir = Right
+            facing.dir = Right;
+            *direction = Right
         } else if keyboard_input.pressed(KeyCode::Down) && facing.dir != Up {
-            facing.dir = Down
+            facing.dir = Down;
+            *direction = Down
         } else if keyboard_input.pressed(KeyCode::Up) && facing.dir != Down {
-            facing.dir = Up
+            facing.dir = Up;
+            *direction = Up
         }
     }
 }
@@ -173,7 +191,9 @@ fn snake_movement(
     segments: ResMut<SnakeSegments>,
     mut heads: Query<(Entity, &SnakeHead)>,
     mut positions: Query<&mut Position>,
+    mut directions: Query<&mut SnakeDirection>,
     mut last_tail_position: ResMut<LastTailPosition>,
+    mut last_tail_direction: ResMut<LastTailDirection>,
 ) {
     use SnakeDirection::*;
 
@@ -182,6 +202,7 @@ fn snake_movement(
             .iter()
             .map(|e| *positions.get_mut(*e).unwrap())
             .collect::<Vec<Position>>();
+
         let mut pos = positions.get_mut(head_entity).unwrap();
 
         match &head.dir {
@@ -200,6 +221,22 @@ fn snake_movement(
             });
 
         *last_tail_position = LastTailPosition(Some(*segment_positions.last().unwrap()));
+
+        let segment_directions = segments
+            .iter()
+            .map(|e| *directions.get_mut(*e).unwrap())
+            .collect::<Vec<SnakeDirection>>();
+
+        segment_directions
+            .iter()
+            .zip(segments.iter().skip(1))
+            .for_each(|(dir, segment)| {
+                *directions.get_mut(*segment).unwrap() = *dir;
+            });
+
+        *last_tail_direction = LastTailDirection(Some(*segment_directions.last().unwrap()));
+
+        println!("{:#?}", segment_directions);
     }
 }
 
@@ -305,26 +342,48 @@ fn draw_bg_element(
         .insert(Position { x, y });
 }
 
-fn spawn_segment(commands: &mut Commands, pos: Position, texture_atlas_handle: Handle<TextureAtlas>) -> Entity {
+fn spawn_segment(
+    commands: &mut Commands,
+    pos: Position,
+    dir: SnakeDirection,
+    texture_atlas_handle: Handle<TextureAtlas>,
+) -> Entity {
     commands
-    .spawn_bundle(SpriteSheetBundle {
-        sprite: TextureAtlasSprite {
-            index: 1,
+        .spawn_bundle(SpriteSheetBundle {
+            sprite: TextureAtlasSprite {
+                index: 1,
+                ..default()
+            },
+            texture_atlas: texture_atlas_handle,
+            transform: Transform {
+                scale: Vec3::from_array([SNAKE_SIZE; 3]),
+                rotation: Quat::from_rotation_z(1.57),
+                ..default()
+            },
             ..default()
-        },
-        texture_atlas: texture_atlas_handle,
-        transform: Transform {
-            scale: Vec3::new(1.0, 1.0, 1.0),
-            rotation: Quat::from_rotation_z(1.57),
-            ..default()
-        },
-        ..default()
         })
-        .insert(SnakeSegment {
-            dir: SnakeDirection::Null,
-        })
+        .insert(SnakeSegment)
+        .insert(dir)
         .insert(pos)
         .id()
+}
+
+fn update_textures(
+    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
+    mut query: Query<(&mut Transform, &SnakeDirection), With<SnakeSegment>>
+) {
+    use SnakeDirection::*;
+
+    for (mut transform, snake_direction) in query.iter_mut() {
+
+        let angle = match snake_direction {
+            Up | Down => 1.57,
+            Left | Right => 0.0,
+            Null => 1.57,
+        };
+
+        transform.rotation = Quat::from_rotation_z(angle);
+    }
 }
 
 // systems2
@@ -339,7 +398,6 @@ fn main() {
             height: 500.0,
             ..default()
         })
-        .init_resource::<SnakeTexture>()
         .insert_resource(ImageSettings::default_nearest())
         .insert_resource(ClearColor(Color::rgb(0.0, 0.169, 0.212)))
         .add_startup_system(setup_camera)
@@ -350,13 +408,15 @@ fn main() {
         .add_startup_system(setup_outline)
         .insert_resource(SnakeSegments::default())
         .insert_resource(LastTailPosition::default())
+        .insert_resource(LastTailDirection::default())
         .add_system(snake_controls.before(snake_movement))
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(0.150))
                 .with_system(snake_movement)
                 .with_system(collision_detection.after(snake_movement))
-                .with_system(scored.after(collision_detection)),
+                .with_system(scored.after(collision_detection))
+                .with_system(update_textures.after(snake_movement)),
         )
         .add_system_set_to_stage(
             CoreStage::PostUpdate,
