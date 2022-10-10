@@ -29,7 +29,7 @@ struct SnakeHead {
 #[derive(Default)]
 struct LastTailPosition(Option<Position>);
 
-#[derive(Default)]
+#[derive(Default, Debug, Copy, Clone)]
 struct LastTailDirection(Option<SnakeDirection>);
 
 #[derive(Component)]
@@ -236,7 +236,7 @@ fn snake_movement(
 
         *last_tail_direction = LastTailDirection(Some(*segment_directions.last().unwrap()));
 
-        println!("{:#?}", segment_directions);
+        println!("{:#?}", last_tail_direction);
     }
 }
 
@@ -348,19 +348,25 @@ fn spawn_segment(
     dir: SnakeDirection,
     texture_atlas_handle: Handle<TextureAtlas>,
 ) -> Entity {
+    use SnakeDirection::*;
+    let index = match dir {
+        Up | Down => 2,
+        Left | Right => 1,
+        Null => 2,
+    };
+
     commands
         .spawn_bundle(SpriteSheetBundle {
             sprite: TextureAtlasSprite {
-                index: 1,
+                index,
                 ..default()
             },
             texture_atlas: texture_atlas_handle,
             transform: Transform {
                 scale: Vec3::from_array([SNAKE_SIZE; 3]),
-                rotation: Quat::from_rotation_z(1.57),
                 ..default()
             },
-            ..default()
+            ..default() 
         })
         .insert(SnakeSegment)
         .insert(dir)
@@ -369,20 +375,18 @@ fn spawn_segment(
 }
 
 fn update_textures(
-    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
-    mut query: Query<(&mut Transform, &SnakeDirection), With<SnakeSegment>>
+    mut query: Query<(&mut TextureAtlasSprite, &SnakeDirection), (With<SnakeSegment>, Without<SnakeHead>)>,
 ) {
     use SnakeDirection::*;
 
-    for (mut transform, snake_direction) in query.iter_mut() {
-
-        let angle = match snake_direction {
-            Up | Down => 1.57,
-            Left | Right => 0.0,
-            Null => 1.57,
+    for (mut sprite, snake_direction) in query.iter_mut() {
+        let index = match snake_direction {
+            Up | Down => 2,
+            Left | Right => 1,
+            Null => 2,
         };
 
-        transform.rotation = Quat::from_rotation_z(angle);
+        sprite.index = index
     }
 }
 
