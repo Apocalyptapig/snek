@@ -30,12 +30,12 @@ struct SnakeHead {
 struct LastTailPosition(Option<Position>);
 
 #[derive(Default, Debug, Copy, Clone)]
-struct LastTailDirection(Option<SnakeDirection>);
+struct LastTailDirection(Option<DirectionPair>);
 
 #[derive(Component)]
 struct SnakeSegment;
 
-#[derive(Default, Deref, DerefMut)]
+#[derive(Default, Deref, DerefMut, Debug)]
 struct SnakeSegments(Vec<Entity>);
 
 #[derive(Component, Copy, Clone, PartialEq, Debug)]
@@ -46,6 +46,9 @@ enum SnakeDirection {
     Right,
     Null,
 }
+
+#[derive(Component, Copy, Clone, PartialEq, Debug)]
+struct DirectionPair(SnakeDirection, SnakeDirection);
 
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
 struct Position {
@@ -146,18 +149,18 @@ fn spawn_snake(
             })
             .insert(SnakeSegment)
             .insert(Position { x: 3, y: 3 })
-            .insert(SnakeDirection::Null)
+            .insert(DirectionPair(SnakeDirection::Null, SnakeDirection::Null))
             .id(),
         spawn_segment(
             &mut commands,
             Position { x: 3, y: 2 },
-            SnakeDirection::Null,
+            DirectionPair(SnakeDirection::Null, SnakeDirection::Null),
             texture_atlas_handle.clone(),
         ),
         spawn_segment(
             &mut commands,
             Position { x: 3, y: 1 },
-            SnakeDirection::Null,
+            DirectionPair(SnakeDirection::Null, SnakeDirection::Null),
             texture_atlas_handle,
         ),
     ]);
@@ -166,23 +169,33 @@ fn spawn_snake(
 fn snake_controls(
     keyboard_input: Res<Input<KeyCode>>,
     mut head_positions: Query<&mut SnakeHead>,
-    mut directions: Query<&mut SnakeDirection>,
+    mut head_directions: Query<&mut DirectionPair, With<SnakeHead>>,
+    prev_directions: Query<&DirectionPair, Without<SnakeHead>>
 ) {
     use SnakeDirection::*;
 
-    for (mut facing, mut direction) in head_positions.iter_mut().zip(directions.iter_mut()) {
+    for ((mut facing, mut direction), prev_directions) in
+
+    head_positions.iter_mut()
+    .zip(head_directions.iter_mut())
+    .zip(prev_directions.iter()) {
+        
         if keyboard_input.pressed(KeyCode::Left) && facing.dir != Right {
+            direction.0 = prev_directions.1;
             facing.dir = Left;
-            *direction = Left
+            direction.1 = facing.dir;
         } else if keyboard_input.pressed(KeyCode::Right) && facing.dir != Left {
+            direction.0 = prev_directions.1;
             facing.dir = Right;
-            *direction = Right
+            direction.1 = facing.dir;
         } else if keyboard_input.pressed(KeyCode::Down) && facing.dir != Up {
+            direction.0 = prev_directions.1;
             facing.dir = Down;
-            *direction = Down
+            direction.1 = facing.dir;
         } else if keyboard_input.pressed(KeyCode::Up) && facing.dir != Down {
+            direction.0 = prev_directions.1;
             facing.dir = Up;
-            *direction = Up
+            direction.1 = facing.dir;
         }
     }
 }
@@ -191,7 +204,7 @@ fn snake_movement(
     segments: ResMut<SnakeSegments>,
     mut heads: Query<(Entity, &SnakeHead)>,
     mut positions: Query<&mut Position>,
-    mut directions: Query<&mut SnakeDirection>,
+    mut directions: Query<&mut DirectionPair>,
     mut last_tail_position: ResMut<LastTailPosition>,
     mut last_tail_direction: ResMut<LastTailDirection>,
 ) {
@@ -225,18 +238,25 @@ fn snake_movement(
         let segment_directions = segments
             .iter()
             .map(|e| *directions.get_mut(*e).unwrap())
-            .collect::<Vec<SnakeDirection>>();
+            .collect::<Vec<DirectionPair>>();
 
         segment_directions
             .iter()
             .zip(segments.iter().skip(1))
             .for_each(|(dir, segment)| {
-                *directions.get_mut(*segment).unwrap() = *dir;
+                directions.get_mut(*segment).unwrap().0 = dir.0;
             });
 
-        *last_tail_direction = LastTailDirection(Some(*segment_directions.last().unwrap()));
+        segment_directions
+            .iter()
+            .zip(segments.iter().skip(1))
+            .for_each(|(dir, segment)| {
+                directions.get_mut(*segment).unwrap().1 = dir.1;
+            });
 
-        println!("{:#?}", last_tail_direction);
+        //println!("{:#?}", segment_directions);
+
+        *last_tail_direction = LastTailDirection(Some(*segment_directions.last().unwrap()));
     }
 }
 
@@ -345,11 +365,11 @@ fn draw_bg_element(
 fn spawn_segment(
     commands: &mut Commands,
     pos: Position,
-    dir: SnakeDirection,
+    dir: DirectionPair,
     texture_atlas_handle: Handle<TextureAtlas>,
 ) -> Entity {
     use SnakeDirection::*;
-    let index = match dir {
+    let index = match dir.1 {
         Up | Down => 2,
         Left | Right => 1,
         Null => 2,
@@ -357,16 +377,13 @@ fn spawn_segment(
 
     commands
         .spawn_bundle(SpriteSheetBundle {
-            sprite: TextureAtlasSprite {
-                index,
-                ..default()
-            },
+            sprite: TextureAtlasSprite { index, ..default() },
             texture_atlas: texture_atlas_handle,
             transform: Transform {
                 scale: Vec3::from_array([SNAKE_SIZE; 3]),
                 ..default()
             },
-            ..default() 
+            ..default()
         })
         .insert(SnakeSegment)
         .insert(dir)
@@ -375,15 +392,25 @@ fn spawn_segment(
 }
 
 fn update_textures(
-    mut query: Query<(&mut TextureAtlasSprite, &SnakeDirection), (With<SnakeSegment>, Without<SnakeHead>)>,
+    mut query: Query<(&mut TextureAtlasSprite, &DirectionPair), (With<SnakeSegment>, Without<SnakeHead>)>,
 ) {
     use SnakeDirection::*;
 
     for (mut sprite, snake_direction) in query.iter_mut() {
-        let index = match snake_direction {
-            Up | Down => 2,
-            Left | Right => 1,
-            Null => 2,
+        let index = match (snake_direction.0, snake_direction.1) {
+            (Left, Up) | (Down, Right) => 5,
+
+            (Right, Up) | (Down, Left) => 4,
+
+            (Left, Down) | (Up, Right) => 9,
+
+            (Right, Down) | (Up, Left) => 8,
+
+            (Up, Up) | (Down, Down) => 2,
+
+            (Left, Left) | (Right, Right) => 1,
+
+            _ => 2,
         };
 
         sprite.index = index
@@ -392,7 +419,7 @@ fn update_textures(
 
 // systems2
 // ---------
-// main
+// mai
 
 fn main() {
     App::new()

@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 bevy = "0.8.1"
-bevy_prototype_lyon = "0.6.0"
 rand = "0.8.5"
 
 [profile.dev.package."*"]
