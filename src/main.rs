@@ -14,7 +14,6 @@ const SNAKE_SIZE: f32 = 1.27;
 const GRID_WIDTH: i32 = 20;
 const GRID_HEIGHT: i32 = 20;
 const FOOD_COLOR: Color = Color::rgb(1.0, 0.0, 1.0);
-
 const PADDING: f32 = 100.0;
 
 // constants
@@ -38,6 +37,7 @@ struct SnakeSegment;
 #[derive(Default, Deref, DerefMut, Debug)]
 struct SnakeSegments(Vec<Entity>);
 
+// some assembly required
 #[derive(Component, Copy, Clone, PartialEq, Debug)]
 enum SnakeDirection {
     Up,
@@ -47,9 +47,24 @@ enum SnakeDirection {
     Null,
 }
 
+// proud of this type; pair.0 is the previous / entry direction,
+// pair.1 is the inputted / exit direction
+
+/*
+dirpair:       snake:
+
+input: left
+_________
+|       |       O o o <
+< l     |           o
+|___^u__|           o
+ prev: up
+*/
+
 #[derive(Component, Copy, Clone, PartialEq, Debug)]
 struct DirectionPair(SnakeDirection, SnakeDirection);
 
+// bring-your-own-grid day
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
 struct Position {
     x: i32,
@@ -71,6 +86,8 @@ struct ScoredEvent;
 // ---------
 // systems
 
+// I wish I could get the texture atlas from
+// a separate function; bevy is weird
 fn scored(
     mut commands: Commands,
     mut segments: ResMut<SnakeSegments>,
@@ -81,7 +98,14 @@ fn scored(
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
 ) {
     let texture_handle = asset_server.load("assets.png");
-    let snake_texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(16.0, 16.0), 4, 4);
+    let snake_texture_atlas = TextureAtlas::from_grid_with_padding(
+        texture_handle,
+        Vec2::new(16.0, 16.0),
+        4,
+        4,
+        Vec2::new(3.0, 3.0),
+        Vec2::new(1.0, 1.0),
+    );
     let texture_atlas_handle = texture_atlases.add(snake_texture_atlas);
 
     if score_reader.iter().next().is_some() {
@@ -116,18 +140,24 @@ fn spawn_food(commands: &mut Commands) {
         .insert(Food);
 }
 
-fn setup_camera(mut commands: Commands) {
-    commands.spawn_bundle(Camera2dBundle { ..default() });
-}
-
+// init snake, camera, textures
 fn spawn_snake(
     mut commands: Commands,
     mut segments: ResMut<SnakeSegments>,
     asset_server: Res<AssetServer>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
 ) {
+    commands.spawn_bundle(Camera2dBundle { ..default() });
+
     let texture_handle = asset_server.load("assets.png");
-    let snake_texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(16.0, 16.0), 4, 4);
+    let snake_texture_atlas = TextureAtlas::from_grid_with_padding(
+        texture_handle,
+        Vec2::new(16.0, 16.0),
+        4,
+        4,
+        Vec2::new(3.0, 3.0),
+        Vec2::new(1.0, 1.0),
+    );
     let texture_atlas_handle = texture_atlases.add(snake_texture_atlas);
 
     *segments = SnakeSegments(vec![
@@ -170,36 +200,70 @@ fn snake_controls(
     keyboard_input: Res<Input<KeyCode>>,
     mut head_positions: Query<&mut SnakeHead>,
     mut head_directions: Query<&mut DirectionPair, With<SnakeHead>>,
-    prev_directions: Query<&DirectionPair, Without<SnakeHead>>
+    prev_directions: Query<&DirectionPair, Without<SnakeHead>>,
 ) {
     use SnakeDirection::*;
 
     for ((mut facing, mut direction), prev_directions) in
+        //  |   3 damn days for like 5 lines
+        //  V   it made corners work but ugh
+        head_positions
+            .iter_mut()
+            .zip(head_directions.iter_mut())
+            .zip(prev_directions.iter())
+    {
+        // what's all this mess? that's right, it's a bad fix for a weird problem.
+        // on seemingly random occasions dirpairs would replicate themselves
+        // until the line was all corner sprites
 
-    head_positions.iter_mut()
-    .zip(head_directions.iter_mut())
-    .zip(prev_directions.iter()) {
-        
+        // the fix is to use some logic to check "hey, is this corner gonna look weird?"
+        // it would be nicer to actually fix the replication but it's a very bizarre bug
+        // nothing more permanent than a temporary solution
+
         if keyboard_input.pressed(KeyCode::Left) && facing.dir != Right {
-            direction.0 = prev_directions.1;
             facing.dir = Left;
-            direction.1 = facing.dir;
+
+            // if it looks bad, assume it's a straight line
+            if direction.0 != direction.1 && *direction == *prev_directions {
+                direction.0 = facing.dir;
+                direction.1 = facing.dir;
+            } else {
+                // if it looks good, promote old dir.1
+                direction.0 = prev_directions.1;
+                direction.1 = facing.dir;
+            }
         } else if keyboard_input.pressed(KeyCode::Right) && facing.dir != Left {
-            direction.0 = prev_directions.1;
             facing.dir = Right;
-            direction.1 = facing.dir;
+            if direction.0 != direction.1 && *direction == *prev_directions {
+                direction.0 = facing.dir;
+                direction.1 = facing.dir;
+            } else {
+                direction.0 = prev_directions.1;
+                direction.1 = facing.dir;
+            }
         } else if keyboard_input.pressed(KeyCode::Down) && facing.dir != Up {
-            direction.0 = prev_directions.1;
             facing.dir = Down;
-            direction.1 = facing.dir;
+            if direction.0 != direction.1 && *direction == *prev_directions {
+                direction.0 = facing.dir;
+                direction.1 = facing.dir;
+            } else {
+                direction.0 = prev_directions.1;
+                direction.1 = facing.dir;
+            }
         } else if keyboard_input.pressed(KeyCode::Up) && facing.dir != Down {
-            direction.0 = prev_directions.1;
             facing.dir = Up;
-            direction.1 = facing.dir;
+            if direction.0 != direction.1 && *direction == *prev_directions {
+                direction.0 = facing.dir;
+                direction.1 = facing.dir;
+            } else {
+                direction.0 = prev_directions.1;
+                direction.1 = facing.dir;
+            }
         }
     }
 }
 
+// hate this function, ugh.
 fn snake_movement(
     segments: ResMut<SnakeSegments>,
     mut heads: Query<(Entity, &SnakeHead)>,
@@ -218,6 +282,7 @@ fn snake_movement(
 
         let mut pos = positions.get_mut(head_entity).unwrap();
 
+        // actual movement is like 6 lines lol
         match &head.dir {
             Left if pos.x > 0 => pos.x -= 1,
             Right if pos.x < GRID_WIDTH - 1 => pos.x += 1,
@@ -226,6 +291,7 @@ fn snake_movement(
             _ => return,
         }
 
+        // cycle segment positions head-to-tail, effectively making them move
         segment_positions
             .iter()
             .zip(segments.iter().skip(1))
@@ -235,6 +301,7 @@ fn snake_movement(
 
         *last_tail_position = LastTailPosition(Some(*segment_positions.last().unwrap()));
 
+        // carbon copies of the position cycler, when in rome
         let segment_directions = segments
             .iter()
             .map(|e| *directions.get_mut(*e).unwrap())
@@ -244,22 +311,14 @@ fn snake_movement(
             .iter()
             .zip(segments.iter().skip(1))
             .for_each(|(dir, segment)| {
-                directions.get_mut(*segment).unwrap().0 = dir.0;
+                *directions.get_mut(*segment).unwrap() = *dir;
             });
-
-        segment_directions
-            .iter()
-            .zip(segments.iter().skip(1))
-            .for_each(|(dir, segment)| {
-                directions.get_mut(*segment).unwrap().1 = dir.1;
-            });
-
-        //println!("{:#?}", segment_directions);
 
         *last_tail_direction = LastTailDirection(Some(*segment_directions.last().unwrap()));
     }
 }
 
+// I don't know what this does but if I take it out everything cries. God help me
 fn size_scaling(windows: Res<Windows>, mut q: Query<(&Size, &mut Transform)>) {
     let window = windows.get_primary().unwrap();
     for (sprite_size, mut transform) in q.iter_mut() {
@@ -271,6 +330,7 @@ fn size_scaling(windows: Res<Windows>, mut q: Query<(&Size, &mut Transform)>) {
     }
 }
 
+// I assume this maps the grid to the screen. cool
 fn position_translation(windows: Res<Windows>, mut q: Query<(&Position, &mut Transform)>) {
     fn convert(pos: f32, bound_window: f32, bound_game: f32) -> f32 {
         let tile_size = bound_window / bound_game;
@@ -294,6 +354,7 @@ fn position_translation(windows: Res<Windows>, mut q: Query<(&Position, &mut Tra
     }
 }
 
+// sometimes caveman solution is the solution
 fn collision_detection(
     mut commands: Commands,
     mut score_writer: EventWriter<ScoredEvent>,
@@ -311,6 +372,7 @@ fn collision_detection(
     }
 }
 
+/*
 fn setup_board(mut commands: Commands) {
     for x in 0..(GRID_WIDTH) {
         if x % 2 == 0 {
@@ -324,7 +386,10 @@ fn setup_board(mut commands: Commands) {
         }
     }
 }
+*/
 
+// draw the outline using math!!!!!
+// todo: change to sprites instead of transform shapes
 fn setup_outline(mut commands: Commands) {
     const OUTLINE_COLOR: (f32, f32, f32) = (0.345, 0.431, 0.459);
 
@@ -339,6 +404,7 @@ fn setup_outline(mut commands: Commands) {
     }
 }
 
+// back in my day we had to draw the border uphill both ways
 fn draw_bg_element(
     x: i32,
     y: i32,
@@ -362,6 +428,7 @@ fn draw_bg_element(
         .insert(Position { x, y });
 }
 
+// copied but shrunken spawn_snake, since it doesn't need to init anything
 fn spawn_segment(
     commands: &mut Commands,
     pos: Position,
@@ -391,8 +458,13 @@ fn spawn_segment(
         .id()
 }
 
+// assigns indexes to dirpairs,
+// changes sprite textures based on the type of dirpair (corner) detected
 fn update_textures(
-    mut query: Query<(&mut TextureAtlasSprite, &DirectionPair), (With<SnakeSegment>, Without<SnakeHead>)>,
+    mut query: Query<
+        (&mut TextureAtlasSprite, &DirectionPair),
+        (With<SnakeSegment>, Without<SnakeHead>),
+    >,
 ) {
     use SnakeDirection::*;
 
@@ -431,7 +503,6 @@ fn main() {
         })
         .insert_resource(ImageSettings::default_nearest())
         .insert_resource(ClearColor(Color::rgb(0.0, 0.169, 0.212)))
-        .add_startup_system(setup_camera)
         .add_startup_system(spawn_snake)
         .add_startup_system(|mut commands: Commands| spawn_food(&mut commands))
         .add_event::<ScoredEvent>()
