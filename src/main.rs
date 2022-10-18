@@ -31,11 +31,17 @@ struct LastTailPosition(Option<Position>);
 #[derive(Default, Debug, Copy, Clone)]
 struct LastTailDirection(Option<DirectionPair>);
 
+#[derive(Default)]
+struct Score(u128);
+
 #[derive(Component)]
 struct SnakeSegment;
 
 #[derive(Default, Deref, DerefMut, Debug)]
 struct SnakeSegments(Vec<Entity>);
+
+#[derive(Component)]
+struct ScoreText;
 
 // some assembly required
 #[derive(Component, Copy, Clone, PartialEq, Debug)]
@@ -96,6 +102,7 @@ fn scored(
     last_tail_direction: Res<LastTailDirection>,
     asset_server: Res<AssetServer>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
+    mut score: ResMut<Score>,
 ) {
     let texture_handle = asset_server.load("assets.png");
     let snake_texture_atlas = TextureAtlas::from_grid_with_padding(
@@ -109,6 +116,8 @@ fn scored(
     let texture_atlas_handle = texture_atlases.add(snake_texture_atlas);
 
     if score_reader.iter().next().is_some() {
+        score.0 += 1;
+
         segments.push(spawn_segment(
             &mut commands,
             last_tail_position.0.unwrap(),
@@ -220,7 +229,10 @@ fn snake_controls(
         // it would be nicer to actually fix the replication but it's a very bizarre bug
         // nothing more permanent than a temporary solution
 
-        if keyboard_input.pressed(KeyCode::Left) && facing.dir != Right {
+        if keyboard_input.pressed(KeyCode::Left)
+            || keyboard_input.pressed(KeyCode::A)
+            && facing.dir != Right
+        {
             facing.dir = Left;
 
             // if it looks bad, assume it's a straight line
@@ -232,7 +244,10 @@ fn snake_controls(
                 direction.0 = prev_directions.1;
                 direction.1 = facing.dir;
             }
-        } else if keyboard_input.pressed(KeyCode::Right) && facing.dir != Left {
+        } else if keyboard_input.pressed(KeyCode::Right)
+            || keyboard_input.pressed(KeyCode::D)
+            && facing.dir != Left
+        {
             facing.dir = Right;
             if direction.0 != direction.1 && *direction == *prev_directions {
                 direction.0 = facing.dir;
@@ -241,7 +256,10 @@ fn snake_controls(
                 direction.0 = prev_directions.1;
                 direction.1 = facing.dir;
             }
-        } else if keyboard_input.pressed(KeyCode::Down) && facing.dir != Up {
+        } else if keyboard_input.pressed(KeyCode::Down)
+            || keyboard_input.pressed(KeyCode::S)
+            && facing.dir != Up
+        {
             facing.dir = Down;
             if direction.0 != direction.1 && *direction == *prev_directions {
                 direction.0 = facing.dir;
@@ -250,7 +268,10 @@ fn snake_controls(
                 direction.0 = prev_directions.1;
                 direction.1 = facing.dir;
             }
-        } else if keyboard_input.pressed(KeyCode::Up) && facing.dir != Down {
+        } else if keyboard_input.pressed(KeyCode::Up)
+            || keyboard_input.pressed(KeyCode::W)
+            && facing.dir != Down
+        {
             facing.dir = Up;
             if direction.0 != direction.1 && *direction == *prev_directions {
                 direction.0 = facing.dir;
@@ -489,9 +510,38 @@ fn update_textures(
     }
 }
 
-// systems2
+fn setup_score_text(mut commands: Commands, asset_server: Res<AssetServer>,) {
+    let style = TextStyle {
+        font: asset_server.load("FiraMono-Regular.ttf"),
+        font_size: 100.0,
+        color: Color::rgb(0.345, 0.431, 0.459),
+    };
+
+    commands
+    .spawn_bundle(
+        Text2dBundle {
+            text: Text::from_section("0", style.clone())
+                .with_alignment(TextAlignment::CENTER),
+            transform: Transform::from_xyz(
+                0.0,
+                0.0,
+                0.0,
+            ),
+            ..default()
+        }
+    )
+    .insert(ScoreText);
+}
+
+fn update_score_text(mut query: Query<&mut Text, With<ScoreText>>, score: Res<Score>) {
+    for mut text in &mut query {
+        text.sections[0].value = format!("{}", score.0);
+    }
+}
+
+// systems
 // ---------
-// mai
+// main
 
 fn main() {
     App::new()
@@ -505,13 +555,16 @@ fn main() {
         .insert_resource(ClearColor(Color::rgb(0.0, 0.169, 0.212)))
         .add_startup_system(spawn_snake)
         .add_startup_system(|mut commands: Commands| spawn_food(&mut commands))
+        .add_startup_system(setup_score_text)
         .add_event::<ScoredEvent>()
         //.add_startup_system(setup_board)
         .add_startup_system(setup_outline)
         .insert_resource(SnakeSegments::default())
         .insert_resource(LastTailPosition::default())
         .insert_resource(LastTailDirection::default())
+        .insert_resource(Score(0))
         .add_system(snake_controls.before(snake_movement))
+        .add_system(update_score_text)
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(0.150))
