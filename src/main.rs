@@ -86,9 +86,38 @@ struct Size {
 #[derive(Component)]
 struct Food;
 
-struct ScoredEvent;
-
 // components
+// ---------
+// plugins
+
+pub struct SetupPlugin;
+
+impl Plugin for SetupPlugin {
+    fn build(&self, app: &mut App) {
+        app
+            .insert_resource(WindowDescriptor {
+                title: "snek".to_string(),
+                width: 500.0,
+                height: 500.0,
+                ..default()
+            })
+            .insert_resource(ImageSettings::default_nearest())
+            .insert_resource(ClearColor(Color::rgb(0.0, 0.169, 0.212)))
+            .add_startup_system(spawn_snake)
+            .add_startup_system(spawn_food_helper)
+            .add_system(spawn_food)
+            .add_startup_system(setup_score_text)
+            .add_event::<ScoredEvent>()
+            .add_event::<FoodHelperEvent>()
+            .add_startup_system(setup_outline)
+            .insert_resource(SnakeSegments::default())
+            .insert_resource(LastTailPosition::default())
+            .insert_resource(LastTailDirection::default())
+            .insert_resource(Score(0));
+    }
+}
+
+// plugins
 // ---------
 // systems
 
@@ -127,26 +156,54 @@ fn scored(
     }
 }
 
-fn spawn_food(commands: &mut Commands) {
-    let mut rng = thread_rng();
+struct FoodHelperEvent;
 
-    commands
-        .spawn_bundle(SpriteBundle {
-            sprite: Sprite {
-                color: FOOD_COLOR,
+fn spawn_food_helper(mut writer: EventWriter<FoodHelperEvent>) {
+    writer.send(FoodHelperEvent);
+}
+
+fn spawn_food(
+    mut commands: Commands,
+    mut helper_reader: EventReader<FoodHelperEvent>,
+    mut score_reader: EventReader<ScoredEvent>,
+    mut positions: Query<&mut Position>,
+    segments: ResMut<SnakeSegments>,
+) {
+    if helper_reader.iter().next().is_some() || score_reader.iter().next().is_some() {
+        let mut rng = thread_rng();
+
+        let segment_positions = segments
+        .iter()
+        .map(|e| *positions.get_mut(*e).unwrap())
+        .collect::<Vec<Position>>();
+
+        let mut pos = Position {
+            x: rng.gen_range(0..GRID_WIDTH),
+            y: rng.gen_range(0..GRID_WIDTH)
+        };
+
+        while segment_positions.contains(&pos) {
+            pos = Position {
+                x: rng.gen_range(0..GRID_WIDTH),
+                y: rng.gen_range(0..GRID_WIDTH)
+            };
+        }
+
+        commands
+            .spawn_bundle(SpriteBundle {
+                sprite: Sprite {
+                    color: FOOD_COLOR,
+                    ..default()
+                },
+                transform: Transform {
+                    scale: Vec3::new(20.0, 20.0, 20.0),
+                    ..default()
+                },
                 ..default()
-            },
-            transform: Transform {
-                scale: Vec3::new(20.0, 20.0, 20.0),
-                ..default()
-            },
-            ..default()
-        })
-        .insert(Position {
-            x: rng.gen_range(0..(GRID_WIDTH - 1)),
-            y: rng.gen_range(0..(GRID_HEIGHT - 1)),
-        })
-        .insert(Food);
+            })
+            .insert(pos)
+            .insert(Food);
+    }
 }
 
 // init snake, camera, textures
@@ -229,9 +286,8 @@ fn snake_controls(
         // it would be nicer to actually fix the replication but it's a very bizarre bug
         // nothing more permanent than a temporary solution
 
-        if keyboard_input.pressed(KeyCode::Left)
-            || keyboard_input.pressed(KeyCode::A)
-            && facing.dir != Right
+        if keyboard_input.pressed(KeyCode::Left) && facing.dir != Right
+            || keyboard_input.pressed(KeyCode::A) && facing.dir != Right
         {
             facing.dir = Left;
 
@@ -244,9 +300,8 @@ fn snake_controls(
                 direction.0 = prev_directions.1;
                 direction.1 = facing.dir;
             }
-        } else if keyboard_input.pressed(KeyCode::Right)
-            || keyboard_input.pressed(KeyCode::D)
-            && facing.dir != Left
+        } else if keyboard_input.pressed(KeyCode::Right) && facing.dir != Left
+            || keyboard_input.pressed(KeyCode::D) && facing.dir != Left
         {
             facing.dir = Right;
             if direction.0 != direction.1 && *direction == *prev_directions {
@@ -256,9 +311,8 @@ fn snake_controls(
                 direction.0 = prev_directions.1;
                 direction.1 = facing.dir;
             }
-        } else if keyboard_input.pressed(KeyCode::Down)
-            || keyboard_input.pressed(KeyCode::S)
-            && facing.dir != Up
+        } else if keyboard_input.pressed(KeyCode::Down) && facing.dir != Up
+            || keyboard_input.pressed(KeyCode::S) && facing.dir != Up
         {
             facing.dir = Down;
             if direction.0 != direction.1 && *direction == *prev_directions {
@@ -268,9 +322,8 @@ fn snake_controls(
                 direction.0 = prev_directions.1;
                 direction.1 = facing.dir;
             }
-        } else if keyboard_input.pressed(KeyCode::Up)
-            || keyboard_input.pressed(KeyCode::W)
-            && facing.dir != Down
+        } else if keyboard_input.pressed(KeyCode::Up) && facing.dir != Down
+            || keyboard_input.pressed(KeyCode::W) && facing.dir != Down
         {
             facing.dir = Up;
             if direction.0 != direction.1 && *direction == *prev_directions {
@@ -375,6 +428,8 @@ fn position_translation(windows: Res<Windows>, mut q: Query<(&Position, &mut Tra
     }
 }
 
+struct ScoredEvent;
+
 // sometimes caveman solution is the solution
 fn collision_detection(
     mut commands: Commands,
@@ -386,7 +441,6 @@ fn collision_detection(
         for (ent, food_pos) in food.iter() {
             if snake_pos == food_pos {
                 commands.entity(ent).despawn();
-                spawn_food(&mut commands);
                 score_writer.send(ScoredEvent);
             }
         }
@@ -510,7 +564,7 @@ fn update_textures(
     }
 }
 
-fn setup_score_text(mut commands: Commands, asset_server: Res<AssetServer>,) {
+fn setup_score_text(mut commands: Commands, asset_server: Res<AssetServer>) {
     let style = TextStyle {
         font: asset_server.load("FiraMono-Regular.ttf"),
         font_size: 250.0,
@@ -518,24 +572,20 @@ fn setup_score_text(mut commands: Commands, asset_server: Res<AssetServer>,) {
     };
 
     commands
-    .spawn_bundle(
-        Text2dBundle {
-            text: Text::from_section("0", style)
-                .with_alignment(TextAlignment::CENTER),
+        .spawn_bundle(Text2dBundle {
+            text: Text::from_section("0", style).with_alignment(TextAlignment::CENTER),
             transform: Transform::from_scale(Vec3::splat(1.0)),
             ..default()
-        }
-    )
-    .insert(ScoreText);
+        })
+        .insert(ScoreText);
 }
 
 fn update_score_text(mut query: Query<&mut Text, With<ScoreText>>, score: Res<Score>) {
     for mut text in &mut query {
-        
         text.sections[0].value = match score.0.to_string().chars().count() {
             1 => format!("00{}", score.0),
             2 => format!("0{}", score.0),
-            _ => format!("{}", score.0)
+            _ => format!("{}", score.0),
         };
     }
 }
@@ -546,24 +596,6 @@ fn update_score_text(mut query: Query<&mut Text, With<ScoreText>>, score: Res<Sc
 
 fn main() {
     App::new()
-        .insert_resource(WindowDescriptor {
-            title: "snek".to_string(),
-            width: 500.0,
-            height: 500.0,
-            ..default()
-        })
-        .insert_resource(ImageSettings::default_nearest())
-        .insert_resource(ClearColor(Color::rgb(0.0, 0.169, 0.212)))
-        .add_startup_system(spawn_snake)
-        .add_startup_system(|mut commands: Commands| spawn_food(&mut commands))
-        .add_startup_system(setup_score_text)
-        .add_event::<ScoredEvent>()
-        //.add_startup_system(setup_board)
-        .add_startup_system(setup_outline)
-        .insert_resource(SnakeSegments::default())
-        .insert_resource(LastTailPosition::default())
-        .insert_resource(LastTailDirection::default())
-        .insert_resource(Score(0))
         .add_system(snake_controls.before(snake_movement))
         .add_system(update_score_text)
         .add_system_set(
@@ -580,6 +612,7 @@ fn main() {
                 .with_system(position_translation)
                 .with_system(size_scaling),
         )
+        .add_plugin(SetupPlugin)
         .add_plugins(DefaultPlugins)
         .run();
 }
