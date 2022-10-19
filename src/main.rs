@@ -513,20 +513,16 @@ fn update_textures(
 fn setup_score_text(mut commands: Commands, asset_server: Res<AssetServer>,) {
     let style = TextStyle {
         font: asset_server.load("FiraMono-Regular.ttf"),
-        font_size: 100.0,
+        font_size: 250.0,
         color: Color::rgb(0.345, 0.431, 0.459),
     };
 
     commands
     .spawn_bundle(
         Text2dBundle {
-            text: Text::from_section("0", style.clone())
+            text: Text::from_section("0", style)
                 .with_alignment(TextAlignment::CENTER),
-            transform: Transform::from_xyz(
-                0.0,
-                0.0,
-                0.0,
-            ),
+            transform: Transform::from_scale(Vec3::splat(1.0)),
             ..default()
         }
     )
@@ -535,7 +531,12 @@ fn setup_score_text(mut commands: Commands, asset_server: Res<AssetServer>,) {
 
 fn update_score_text(mut query: Query<&mut Text, With<ScoreText>>, score: Res<Score>) {
     for mut text in &mut query {
-        text.sections[0].value = format!("{}", score.0);
+        
+        text.sections[0].value = match score.0.to_string().chars().count() {
+            1 => format!("00{}", score.0),
+            2 => format!("0{}", score.0),
+            _ => format!("{}", score.0)
+        };
     }
 }
 
