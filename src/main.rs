@@ -1,25 +1,14 @@
 //#![windows_subsystem = "windows"]
 
-// ----------
-// imports
-
-use bevy::{prelude::*, render::texture::*, time::FixedTimestep};
+use bevy::{ecs::schedule::ShouldRun, prelude::*, render::texture::*};
 use rand::{thread_rng, Rng};
-
-// imports
-// ----------
-// constants
+use std::time::Duration;
 
 const SNAKE_SIZE: f32 = 1.27;
 const GRID_WIDTH: i32 = 20;
 const GRID_HEIGHT: i32 = 20;
 const FOOD_COLOR: Color = Color::rgb(1.0, 0.0, 1.0);
 const PADDING: f32 = 100.0;
-
-// constants
-// ---------
-// components
-
 #[derive(Component)]
 struct SnakeHead {
     dir: SnakeDirection,
@@ -65,6 +54,7 @@ _________
 < l     |           o
 |___^u__|           o
  prev: up
+
 */
 
 #[derive(Component, Copy, Clone, PartialEq, Debug)]
@@ -85,53 +75,13 @@ struct Size {
 
 #[derive(Component)]
 struct Food;
+#[derive(Default, Debug, Clone)]
+struct SpriteSheet(Handle<TextureAtlas>);
 
-// components
-// ---------
-// plugins
-
-pub struct SetupPlugin;
-
-impl Plugin for SetupPlugin {
-    fn build(&self, app: &mut App) {
-        app
-            .insert_resource(WindowDescriptor {
-                title: "snek".to_string(),
-                width: 500.0,
-                height: 500.0,
-                ..default()
-            })
-            .insert_resource(ImageSettings::default_nearest())
-            .insert_resource(ClearColor(Color::rgb(0.0, 0.169, 0.212)))
-            .add_startup_system(spawn_snake)
-            .add_startup_system(spawn_food_helper)
-            .add_system(spawn_food)
-            .add_startup_system(setup_score_text)
-            .add_event::<ScoredEvent>()
-            .add_event::<FoodHelperEvent>()
-            .add_startup_system(setup_outline)
-            .insert_resource(SnakeSegments::default())
-            .insert_resource(LastTailPosition::default())
-            .insert_resource(LastTailDirection::default())
-            .insert_resource(Score(0));
-    }
-}
-
-// plugins
-// ---------
-// systems
-
-// I wish I could get the texture atlas from
-// a separate function; bevy is weird
-fn scored(
-    mut commands: Commands,
-    mut segments: ResMut<SnakeSegments>,
-    mut score_reader: EventReader<ScoredEvent>,
-    last_tail_position: Res<LastTailPosition>,
-    last_tail_direction: Res<LastTailDirection>,
+fn make_atlas(
+    mut sprite_sheet: ResMut<SpriteSheet>,
     asset_server: Res<AssetServer>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
-    mut score: ResMut<Score>,
 ) {
     let texture_handle = asset_server.load("assets.png");
     let snake_texture_atlas = TextureAtlas::from_grid_with_padding(
@@ -142,8 +92,18 @@ fn scored(
         Vec2::new(3.0, 3.0),
         Vec2::new(1.0, 1.0),
     );
-    let texture_atlas_handle = texture_atlases.add(snake_texture_atlas);
+    sprite_sheet.0 = texture_atlases.add(snake_texture_atlas);
+}
 
+fn scored(
+    mut commands: Commands,
+    mut segments: ResMut<SnakeSegments>,
+    mut score_reader: EventReader<ScoredEvent>,
+    last_tail_position: Res<LastTailPosition>,
+    last_tail_direction: Res<LastTailDirection>,
+    mut score: ResMut<Score>,
+    sprite_sheet: Res<SpriteSheet>,
+) {
     if score_reader.iter().next().is_some() {
         score.0 += 1;
 
@@ -151,7 +111,7 @@ fn scored(
             &mut commands,
             last_tail_position.0.unwrap(),
             last_tail_direction.0.unwrap(),
-            texture_atlas_handle,
+            &sprite_sheet.0,
         ));
     }
 }
@@ -173,19 +133,19 @@ fn spawn_food(
         let mut rng = thread_rng();
 
         let segment_positions = segments
-        .iter()
-        .map(|e| *positions.get_mut(*e).unwrap())
-        .collect::<Vec<Position>>();
+            .iter()
+            .map(|e| *positions.get_mut(*e).unwrap())
+            .collect::<Vec<Position>>();
 
         let mut pos = Position {
             x: rng.gen_range(0..GRID_WIDTH),
-            y: rng.gen_range(0..GRID_WIDTH)
+            y: rng.gen_range(0..GRID_WIDTH),
         };
 
         while segment_positions.contains(&pos) {
             pos = Position {
                 x: rng.gen_range(0..GRID_WIDTH),
-                y: rng.gen_range(0..GRID_WIDTH)
+                y: rng.gen_range(0..GRID_WIDTH),
             };
         }
 
@@ -210,21 +170,9 @@ fn spawn_food(
 fn spawn_snake(
     mut commands: Commands,
     mut segments: ResMut<SnakeSegments>,
-    asset_server: Res<AssetServer>,
-    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
+    sprite_sheet: Res<SpriteSheet>,
 ) {
     commands.spawn_bundle(Camera2dBundle { ..default() });
-
-    let texture_handle = asset_server.load("assets.png");
-    let snake_texture_atlas = TextureAtlas::from_grid_with_padding(
-        texture_handle,
-        Vec2::new(16.0, 16.0),
-        4,
-        4,
-        Vec2::new(3.0, 3.0),
-        Vec2::new(1.0, 1.0),
-    );
-    let texture_atlas_handle = texture_atlases.add(snake_texture_atlas);
 
     *segments = SnakeSegments(vec![
         commands
@@ -233,7 +181,7 @@ fn spawn_snake(
                     index: 0,
                     ..default()
                 },
-                texture_atlas: texture_atlas_handle.clone(),
+                texture_atlas: sprite_sheet.0.clone(),
                 transform: Transform {
                     scale: Vec3::from_array([SNAKE_SIZE; 3]),
                     ..default()
@@ -251,13 +199,13 @@ fn spawn_snake(
             &mut commands,
             Position { x: 3, y: 2 },
             DirectionPair(SnakeDirection::Null, SnakeDirection::Null),
-            texture_atlas_handle.clone(),
+            &sprite_sheet.0.clone(),
         ),
         spawn_segment(
             &mut commands,
             Position { x: 3, y: 1 },
             DirectionPair(SnakeDirection::Null, SnakeDirection::Null),
-            texture_atlas_handle,
+            &sprite_sheet.0,
         ),
     ]);
 }
@@ -508,7 +456,7 @@ fn spawn_segment(
     commands: &mut Commands,
     pos: Position,
     dir: DirectionPair,
-    texture_atlas_handle: Handle<TextureAtlas>,
+    texture_atlas_handle: &Handle<TextureAtlas>,
 ) -> Entity {
     use SnakeDirection::*;
     let index = match dir.1 {
@@ -520,7 +468,7 @@ fn spawn_segment(
     commands
         .spawn_bundle(SpriteSheetBundle {
             sprite: TextureAtlasSprite { index, ..default() },
-            texture_atlas: texture_atlas_handle,
+            texture_atlas: texture_atlas_handle.clone(),
             transform: Transform {
                 scale: Vec3::from_array([SNAKE_SIZE; 3]),
                 ..default()
@@ -580,7 +528,15 @@ fn setup_score_text(mut commands: Commands, asset_server: Res<AssetServer>) {
         .insert(ScoreText);
 }
 
-fn update_score_text(mut query: Query<&mut Text, With<ScoreText>>, score: Res<Score>) {
+fn update_score_text(
+    mut timer: ResMut<SnakeLoop>,
+    mut query: Query<&mut Text, With<ScoreText>>,
+    score: Res<Score>,
+) {
+    timer.0.set_duration(Duration::from_millis(
+        (125.0 - (score.0 as f64 / 1.0)) as u64,
+    ));
+
     for mut text in &mut query {
         text.sections[0].value = match score.0.to_string().chars().count() {
             1 => format!("00{}", score.0),
@@ -590,29 +546,73 @@ fn update_score_text(mut query: Query<&mut Text, With<ScoreText>>, score: Res<Sc
     }
 }
 
-// systems
-// ---------
-// main
+// thanks Xion
+#[derive(Deref, DerefMut)]
+struct SnakeLoop(Timer);
+fn snake_loop(mut timer: ResMut<SnakeLoop>, time: Res<Time>) -> ShouldRun {
+    if timer.0.tick(time.delta()).just_finished() {
+        ShouldRun::Yes
+    } else {
+        ShouldRun::No
+    }
+}
+
+pub struct SetupPlugin;
+
+impl Plugin for SetupPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(WindowDescriptor {
+            title: "snek".to_string(),
+            width: 500.0,
+            height: 500.0,
+            ..default()
+        })
+        .insert_resource(ImageSettings::default_nearest())
+        .insert_resource(ClearColor(Color::rgb(0.0, 0.169, 0.212)))
+        .insert_resource(SpriteSheet::default())
+        .add_startup_system(spawn_food_helper)
+        .add_startup_system(make_atlas)
+        .add_system(spawn_food)
+        .add_startup_system(setup_score_text)
+        .add_event::<ScoredEvent>()
+        .add_event::<FoodHelperEvent>()
+        .add_startup_system(setup_outline)
+        .add_startup_system(spawn_snake.after(make_atlas))
+        .insert_resource(SnakeSegments::default())
+        .insert_resource(LastTailPosition::default())
+        .insert_resource(LastTailDirection::default())
+        .insert_resource(Score(0))
+        .insert_resource(SnakeLoop(Timer::new(Duration::from_millis(125), true)));
+    }
+}
+
+pub struct GameplayPlugin;
+
+impl Plugin for GameplayPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_system(snake_controls.before(snake_movement))
+            .add_system(update_score_text)
+            .add_system_set(
+                SystemSet::new()
+                    .with_run_criteria(snake_loop)
+                    .with_system(snake_movement)
+                    .with_system(collision_detection.after(snake_movement))
+                    .with_system(scored.after(collision_detection))
+                    .with_system(update_textures.after(snake_movement)),
+            )
+            .add_system_set_to_stage(
+                CoreStage::PostUpdate,
+                SystemSet::new()
+                    .with_system(position_translation)
+                    .with_system(size_scaling),
+            );
+    }
+}
 
 fn main() {
     App::new()
-        .add_system(snake_controls.before(snake_movement))
-        .add_system(update_score_text)
-        .add_system_set(
-            SystemSet::new()
-                .with_run_criteria(FixedTimestep::step(0.150))
-                .with_system(snake_movement)
-                .with_system(collision_detection.after(snake_movement))
-                .with_system(scored.after(collision_detection))
-                .with_system(update_textures.after(snake_movement)),
-        )
-        .add_system_set_to_stage(
-            CoreStage::PostUpdate,
-            SystemSet::new()
-                .with_system(position_translation)
-                .with_system(size_scaling),
-        )
         .add_plugin(SetupPlugin)
+        .add_plugin(GameplayPlugin)
         .add_plugins(DefaultPlugins)
         .run();
 }
