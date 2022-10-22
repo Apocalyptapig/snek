@@ -2,17 +2,16 @@
 
 use bevy::{ecs::schedule::ShouldRun, prelude::*, render::texture::*};
 use rand::{thread_rng, Rng};
-use std::time::Duration;
+use std::{time::Duration};
 
 const SNAKE_SIZE: f32 = 1.27;
 const GRID_WIDTH: i32 = 20;
 const GRID_HEIGHT: i32 = 20;
 const FOOD_COLOR: Color = Color::rgb(1.0, 0.0, 1.0);
 const PADDING: f32 = 100.0;
+const SNAKE_STEP: f64 = 125.0;
 #[derive(Component)]
-struct SnakeHead {
-    dir: SnakeDirection,
-}
+struct SnakeHead;
 
 #[derive(Default)]
 struct LastTailPosition(Option<Position>);
@@ -188,9 +187,7 @@ fn spawn_snake(
                 },
                 ..default()
             })
-            .insert(SnakeHead {
-                dir: SnakeDirection::Null,
-            })
+            .insert(SnakeHead)
             .insert(SnakeSegment)
             .insert(Position { x: 3, y: 3 })
             .insert(DirectionPair(SnakeDirection::Null, SnakeDirection::Null))
@@ -212,19 +209,15 @@ fn spawn_snake(
 
 fn snake_controls(
     keyboard_input: Res<Input<KeyCode>>,
-    mut head_positions: Query<&mut SnakeHead>,
     mut head_directions: Query<&mut DirectionPair, With<SnakeHead>>,
     prev_directions: Query<&DirectionPair, Without<SnakeHead>>,
 ) {
     use SnakeDirection::*;
 
-    for ((mut facing, mut direction), prev_directions) in
+    for (mut direction, prev_directions) in
         //  |   3 damn days for like 5 lines
         //  V   it made corners work but ugh
-        head_positions
-            .iter_mut()
-            .zip(head_directions.iter_mut())
-            .zip(prev_directions.iter())
+        head_directions.iter_mut().zip(prev_directions.iter())
     {
         // what's all this mess? that's right, it's a bad fix for a weird problem.
         // on seemingly random occasions dirpairs would replicate themselves
@@ -234,52 +227,47 @@ fn snake_controls(
         // it would be nicer to actually fix the replication but it's a very bizarre bug
         // nothing more permanent than a temporary solution
 
-        if keyboard_input.pressed(KeyCode::Left) && facing.dir != Right
-            || keyboard_input.pressed(KeyCode::A) && facing.dir != Right
+        if keyboard_input.pressed(KeyCode::Left) && direction.1 != Right
+            || keyboard_input.pressed(KeyCode::A) && direction.1 != Right
         {
-            facing.dir = Left;
-
             // if it looks bad, assume it's a straight line
             if direction.0 != direction.1 && *direction == *prev_directions {
-                direction.0 = facing.dir;
-                direction.1 = facing.dir;
+                direction.0 = Left;
+                direction.1 = Left;
             } else {
                 // if it looks good, promote old dir.1
                 direction.0 = prev_directions.1;
-                direction.1 = facing.dir;
+                direction.1 = Left;
             }
-        } else if keyboard_input.pressed(KeyCode::Right) && facing.dir != Left
-            || keyboard_input.pressed(KeyCode::D) && facing.dir != Left
+        } else if keyboard_input.pressed(KeyCode::Right) && direction.1 != Left
+            || keyboard_input.pressed(KeyCode::D) && direction.1 != Left
         {
-            facing.dir = Right;
             if direction.0 != direction.1 && *direction == *prev_directions {
-                direction.0 = facing.dir;
-                direction.1 = facing.dir;
+                direction.0 = Right;
+                direction.1 = Right;
             } else {
                 direction.0 = prev_directions.1;
-                direction.1 = facing.dir;
+                direction.1 = Right;
             }
-        } else if keyboard_input.pressed(KeyCode::Down) && facing.dir != Up
-            || keyboard_input.pressed(KeyCode::S) && facing.dir != Up
+        } else if keyboard_input.pressed(KeyCode::Down) && direction.1 != Up
+            || keyboard_input.pressed(KeyCode::S) && direction.1 != Up
         {
-            facing.dir = Down;
             if direction.0 != direction.1 && *direction == *prev_directions {
-                direction.0 = facing.dir;
-                direction.1 = facing.dir;
+                direction.0 = Down;
+                direction.1 = Down;
             } else {
                 direction.0 = prev_directions.1;
-                direction.1 = facing.dir;
+                direction.1 = Down;
             }
-        } else if keyboard_input.pressed(KeyCode::Up) && facing.dir != Down
-            || keyboard_input.pressed(KeyCode::W) && facing.dir != Down
+        } else if keyboard_input.pressed(KeyCode::Up) && direction.1 != Down
+            || keyboard_input.pressed(KeyCode::W) && direction.1 != Down
         {
-            facing.dir = Up;
             if direction.0 != direction.1 && *direction == *prev_directions {
-                direction.0 = facing.dir;
-                direction.1 = facing.dir;
+                direction.0 = Up;
+                direction.1 = Up;
             } else {
                 direction.0 = prev_directions.1;
-                direction.1 = facing.dir;
+                direction.1 = Up;
             }
         }
     }
@@ -287,8 +275,9 @@ fn snake_controls(
 
 // hate this function, ugh.
 fn snake_movement(
-    segments: ResMut<SnakeSegments>,
-    mut heads: Query<(Entity, &SnakeHead)>,
+    mut commands: Commands,
+    mut segments: ResMut<SnakeSegments>,
+    mut heads: Query<Entity, With<SnakeHead>>,
     mut positions: Query<&mut Position>,
     mut directions: Query<&mut DirectionPair>,
     mut last_tail_position: ResMut<LastTailPosition>,
@@ -296,22 +285,38 @@ fn snake_movement(
 ) {
     use SnakeDirection::*;
 
-    if let Some((head_entity, head)) = heads.iter_mut().next() {
+    if let Some(head) = heads.iter_mut().next() {
         let segment_positions = segments
             .iter()
             .map(|e| *positions.get_mut(*e).unwrap())
             .collect::<Vec<Position>>();
 
-        let mut pos = positions.get_mut(head_entity).unwrap();
+        let mut pos = positions.get_mut(head).unwrap();
+        let dir = directions.get(head).unwrap();
 
-        // actual movement is like 6 lines lol
-        match &head.dir {
+        let future_pos = match dir.1 {
+            Left => Position { x: pos.x - 1, y: pos.y },
+            Right => Position { x: pos.x + 1, y: pos.y },
+            Up => Position { x: pos.x, y: pos.y + 1},
+            Down => Position { x: pos.x, y: pos.y - 1},
+            Null => return,
+        };
+
+        if future_pos.x < GRID_WIDTH && future_pos.x > -1
+            && future_pos.y < GRID_WIDTH && future_pos.y > -1
+            && !segment_positions.contains(&future_pos)
+        {
+                *pos = future_pos;
+        
+        /*
+        match dir.1 {
             Left if pos.x > 0 => pos.x -= 1,
             Right if pos.x < GRID_WIDTH - 1 => pos.x += 1,
             Up if pos.y < GRID_WIDTH - 1 => pos.y += 1,
             Down if pos.y > 0 => pos.y -= 1,
             _ => return,
         }
+        */
 
         // cycle segment positions head-to-tail, effectively making them move
         segment_positions
@@ -337,6 +342,11 @@ fn snake_movement(
             });
 
         *last_tail_direction = LastTailDirection(Some(*segment_directions.last().unwrap()));
+
+        } else {
+            commands.entity(*segments.last().unwrap()).despawn();
+            segments.pop();
+        }
     }
 }
 
@@ -382,16 +392,63 @@ struct ScoredEvent;
 fn collision_detection(
     mut commands: Commands,
     mut score_writer: EventWriter<ScoredEvent>,
-    snake: Query<&Position, With<SnakeHead>>,
+    mut despawn_writer: EventWriter<DespawnEvent>,
+    snake_head: Query<(Entity, &Position), With<SnakeHead>>,
     food: Query<(Entity, &Position), With<Food>>,
+    segments: Query<&Position, (With<SnakeSegment>, Without<SnakeHead>)>
 ) {
-    for snake_pos in snake.iter() {
+    for snake_pos in snake_head.iter() {
         for (ent, food_pos) in food.iter() {
-            if snake_pos == food_pos {
+            if snake_pos.1 == food_pos {
                 commands.entity(ent).despawn();
                 score_writer.send(ScoredEvent);
             }
         }
+
+        for segment_pos in segments.iter() {
+            if snake_pos.1 == segment_pos {
+                //despawn_writer.send(DespawnEvent);
+            }
+        }
+    }
+}
+
+struct DespawnEvent;
+
+fn despawn_segment(
+    mut commands: Commands,
+    mut segments: ResMut<SnakeSegments>,
+    mut positions: Query<&mut Position>,
+    mut directions: Query<&mut DirectionPair>,
+    mut reader: EventReader<DespawnEvent>,
+) {
+    if reader.iter().next().is_some() {
+        commands.entity(*segments.last().unwrap()).despawn();
+        segments.pop();
+
+        let segment_positions = segments
+            .iter()
+            .map(|e| *positions.get_mut(*e).unwrap())
+            .collect::<Vec<Position>>();
+
+        let segment_directions = segments
+            .iter()
+            .map(|e| *directions.get_mut(*e).unwrap())
+            .collect::<Vec<DirectionPair>>();
+
+        segment_directions
+            .iter()
+            .zip(segments.iter().skip(1))
+            .for_each(|(dir, segment)| {
+                *directions.get_mut(*segment).unwrap() = *dir;
+            });
+
+        segment_positions
+            .iter()
+            .zip(segments.iter().skip(1))
+            .for_each(|(pos, segment)| {
+                *positions.get_mut(*segment).unwrap() = *pos;
+            });
     }
 }
 
@@ -534,7 +591,7 @@ fn update_score_text(
     score: Res<Score>,
 ) {
     timer.0.set_duration(Duration::from_millis(
-        (125.0 - (score.0 as f64 / 1.0)) as u64,
+        (SNAKE_STEP - (score.0 as f64 * 2.0)) as u64,
     ));
 
     for mut text in &mut query {
@@ -576,13 +633,14 @@ impl Plugin for SetupPlugin {
         .add_startup_system(setup_score_text)
         .add_event::<ScoredEvent>()
         .add_event::<FoodHelperEvent>()
+        .add_event::<DespawnEvent>()
         .add_startup_system(setup_outline)
         .add_startup_system(spawn_snake.after(make_atlas))
         .insert_resource(SnakeSegments::default())
         .insert_resource(LastTailPosition::default())
         .insert_resource(LastTailDirection::default())
         .insert_resource(Score(0))
-        .insert_resource(SnakeLoop(Timer::new(Duration::from_millis(125), true)));
+        .insert_resource(SnakeLoop(Timer::new(Duration::from_millis(1), true)));
     }
 }
 
@@ -592,10 +650,11 @@ impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(snake_controls.before(snake_movement))
             .add_system(update_score_text)
+            .add_system(despawn_segment.before(update_textures))
             .add_system_set(
                 SystemSet::new()
                     .with_run_criteria(snake_loop)
-                    .with_system(snake_movement)
+                    .with_system(snake_movement.before(collision_detection))
                     .with_system(collision_detection.after(snake_movement))
                     .with_system(scored.after(collision_detection))
                     .with_system(update_textures.after(snake_movement)),
