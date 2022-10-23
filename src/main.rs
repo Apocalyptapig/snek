@@ -162,6 +162,7 @@ fn spawn_food(
             })
             .insert(pos)
             .insert(Food);
+        
     }
 }
 
@@ -392,7 +393,6 @@ struct ScoredEvent;
 fn collision_detection(
     mut commands: Commands,
     mut score_writer: EventWriter<ScoredEvent>,
-    mut despawn_writer: EventWriter<DespawnEvent>,
     snake_head: Query<(Entity, &Position), With<SnakeHead>>,
     food: Query<(Entity, &Position), With<Food>>,
     segments: Query<&Position, (With<SnakeSegment>, Without<SnakeHead>)>
@@ -410,45 +410,6 @@ fn collision_detection(
                 //despawn_writer.send(DespawnEvent);
             }
         }
-    }
-}
-
-struct DespawnEvent;
-
-fn despawn_segment(
-    mut commands: Commands,
-    mut segments: ResMut<SnakeSegments>,
-    mut positions: Query<&mut Position>,
-    mut directions: Query<&mut DirectionPair>,
-    mut reader: EventReader<DespawnEvent>,
-) {
-    if reader.iter().next().is_some() {
-        commands.entity(*segments.last().unwrap()).despawn();
-        segments.pop();
-
-        let segment_positions = segments
-            .iter()
-            .map(|e| *positions.get_mut(*e).unwrap())
-            .collect::<Vec<Position>>();
-
-        let segment_directions = segments
-            .iter()
-            .map(|e| *directions.get_mut(*e).unwrap())
-            .collect::<Vec<DirectionPair>>();
-
-        segment_directions
-            .iter()
-            .zip(segments.iter().skip(1))
-            .for_each(|(dir, segment)| {
-                *directions.get_mut(*segment).unwrap() = *dir;
-            });
-
-        segment_positions
-            .iter()
-            .zip(segments.iter().skip(1))
-            .for_each(|(pos, segment)| {
-                *positions.get_mut(*segment).unwrap() = *pos;
-            });
     }
 }
 
@@ -633,7 +594,6 @@ impl Plugin for SetupPlugin {
         .add_startup_system(setup_score_text)
         .add_event::<ScoredEvent>()
         .add_event::<FoodHelperEvent>()
-        .add_event::<DespawnEvent>()
         .add_startup_system(setup_outline)
         .add_startup_system(spawn_snake.after(make_atlas))
         .insert_resource(SnakeSegments::default())
@@ -650,7 +610,6 @@ impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(snake_controls.before(snake_movement))
             .add_system(update_score_text)
-            .add_system(despawn_segment.before(update_textures))
             .add_system_set(
                 SystemSet::new()
                     .with_run_criteria(snake_loop)
