@@ -483,9 +483,11 @@ fn spawn_segment(
         Null => 2,
     };
 
+    let color = Color::rgba(1.0, 1.0, 1.0, 0.5);
+
     commands
         .spawn_bundle(SpriteSheetBundle {
-            sprite: TextureAtlasSprite { index, ..default() },
+            sprite: TextureAtlasSprite { index, color, ..default() },
             texture_atlas: texture_atlas_handle.clone(),
             transform: Transform {
                 scale: Vec3::from_array([SNAKE_SIZE; 3]),
@@ -550,9 +552,26 @@ fn update_score_text(
     mut timer: ResMut<SnakeLoop>,
     mut query: Query<&mut Text, With<ScoreText>>,
     score: Res<Score>,
+    pos: Query<&Position>,
+    head: Query<Entity, With<SnakeHead>>
 ) {
+    let mut head_pos = Position { x: 0, y: 0 };
+
+    for i in head.iter() {
+        head_pos = *pos.get(i).unwrap();
+    }
+
+    let (x, y) = (head_pos.x, head_pos.y);
+
+    let mut x_factor = (((GRID_WIDTH - x) + (0 - x)) / 2).abs();
+    if x_factor < 8 { x_factor = 0 };
+    let mut y_factor = (((GRID_WIDTH - y) + (0 - y)) / 2).abs();
+    if y_factor < 8 { y_factor = 0 };
+
+    let factor = std::cmp::max(x_factor, y_factor);
+
     timer.0.set_duration(Duration::from_millis(
-        (SNAKE_STEP - (score.0 as f64 * 2.0)) as u64,
+        (SNAKE_STEP + (factor as f64 * 2.0) - (score.0 as f64 * 2.0)) as u64,
     ));
 
     for mut text in &mut query {
@@ -562,6 +581,8 @@ fn update_score_text(
             _ => format!("{}", score.0),
         };
     }
+
+    println!("{:#?}", y_factor);
 }
 
 // thanks Xion
