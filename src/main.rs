@@ -3,6 +3,7 @@
 use bevy::{ecs::schedule::ShouldRun, prelude::*, render::texture::*};
 use rand::{thread_rng, Rng};
 use std::{time::Duration};
+use snek::{log};
 
 const SNAKE_SIZE: f32 = 1.27;
 const GRID_WIDTH: i32 = 20;
@@ -581,8 +582,8 @@ fn update_score_text(
             _ => format!("{}", score.0),
         };
     }
-
-    println!("{:#?}", y_factor);
+    
+    log!(y_factor);
 }
 
 // thanks Xion
